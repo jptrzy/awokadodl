@@ -1,7 +1,7 @@
 # AwocadoDL
 Download, search and get information about your comic/manga/webtoon from your terminal.
 
-* I don't usually work with rust so if anybody see any error or a new way to make it faster, than fill free to contribute. *
+*I don't usually work with rust so if anybody see any error or a new way to make it faster, than fill free to contribute.*
 
 # Roadmap
 - cbz support
