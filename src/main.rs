@@ -1,7 +1,7 @@
 use std::{fs::File, path::Path, ffi::OsStr, fs, io::Write};
 use clap::Parser;
 use chrono::{DateTime, Utc, FixedOffset, NaiveDateTime};
-use std::io;
+use std::{io, env};
 
 //pub mod scraper;
 
@@ -152,6 +152,10 @@ fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, t
 
     println!("Start downloading chapters {} to {}", _from_chapter, _to_chapter);
 
+    let mut path: String = env::var("AWOKADO_DL_PATH")
+        .unwrap_or(env::var("HOME")
+            .unwrap_or(".".to_owned()) + "/Comics");
+
     for n in _from_chapter.._to_chapter+1 {
 
         let chapter = &chapters[length - n];
@@ -159,7 +163,7 @@ fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, t
         println!("Downloading {} chapter that has name \"{}\"", n, chapter.get_name());
 
         chapter.download_to_folder(
-            (comic.get_name() + "/" + chapter.get_name().as_str()).as_str());
+            (path.clone() + "/" + comic.get_name().as_str() + "/" + chapter.get_name().as_str()).as_str());
     }
 }
 
