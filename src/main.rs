@@ -3,189 +3,31 @@ use clap::Parser;
 use chrono::{DateTime, Utc, FixedOffset, NaiveDateTime};
 use std::io;
 
-pub fn trim_whitespace(s: &str) -> String {
-    let mut new_str = s.trim().to_owned();
-    let mut prev = ' '; // The initial value doesn't really matter
-    new_str.retain(|ch| {
-        let result = ch != ' ' || prev != ' ';
-        prev = ch;
-        result
-    });
-    new_str
-}
+//pub mod scraper;
 
-#[derive(strum_macros::Display)]
-enum Status {
-    Other = -1,
-    Ongoing,
-    Suspended,
-    Completed,
-}
+pub mod comic_scraper;
 
-struct ComicMoreInfo {
-    status: Status,
-    last_update: Option<NaiveDateTime>,
-}
+use crate::comic_scraper::*;
+use crate::comic_scraper::ww5_mangakakalot_tv::*;
 
-#[derive(Clone, Debug)]
-struct ComicShortInfo {
-    url: String,
-    name: String,
-}
-
-impl ComicShortInfo {
-    fn get_more_info(&self) -> ComicMoreInfo {
-        let mut more_info = ComicMoreInfo{
-            status: Status::Other,
-            last_update: None,
-        };
-
-        let response = reqwest::blocking::get(self.url.to_owned())
-            .unwrap()
-            .text()
-            .unwrap();
-
-        let document = scraper::Html::parse_document(&response);
-            
-        let status_selector = scraper::Selector::parse(".manga-info-text li:nth-of-type(3)").unwrap();
-
-        more_info.status = match document.select(&status_selector).next().unwrap().inner_html().as_ref() {
-            "Status : Ongoing" => Status::Ongoing,
-            "Status : Completed" => Status::Completed,
-            _ => Status::Other
-        };
-            
-        let date_selector = scraper::Selector::parse(".manga-info-text li:nth-of-type(4)").unwrap();
-       
-        let date_text = document.select(&date_selector).next().unwrap().inner_html();
-        // May 25,2019 - 12:00 PM
-        more_info.last_update = NaiveDateTime::parse_from_str(date_text.as_ref(),
-            "Last updated : %b %d,%Y - %H:%M %p").ok();
-        return more_info;
-    }
-
-    fn get_chapters(&self) -> Vec<Chapter> {
-        let mut chapters = Vec::new();
-
-        let response = reqwest::blocking::get(self.url.to_owned())
-            .unwrap()
-            .text()
-            .unwrap();
-
-        let document = scraper::Html::parse_document(&response);
-            
-        let chapters_selector = scraper::Selector::parse(".manga-info-chapter span a").unwrap();
-
-        document.select(&chapters_selector).for_each(|x| chapters.push(Chapter { 
-            url: "https://ww5.mangakakalot.tv/".to_owned() + x.value().attr("href").unwrap(),
-            name: trim_whitespace(x.inner_html().as_str()),
-        }) );
-
-        return chapters;
-    }
-}
-
-struct Chapter {
-    name: String,
-    url: String,
-}
-
-impl Chapter {
-    fn get_image_urls(&self) -> Vec<String> {
-        let mut images = Vec::new();
-
-        let response = reqwest::blocking::get(self.url.to_owned())
-            .unwrap()
-            .text()
-            .unwrap();
-
-        let document = scraper::Html::parse_document(&response);
-
-        let images_selector = scraper::Selector::parse("img.img-loading").unwrap();
-
-        document.select(&images_selector).for_each(|x| images.push(x.value().attr("data-src").unwrap().to_owned()));
-
-        return images;
-    }
-
-    fn download_to_folder(&self, path: &str) {
-        fs::create_dir_all(path);
-
-        for (i, image_url) in self.get_image_urls().iter().enumerate() {
-
-            let ext = image_url.split(".").last().to_owned().unwrap();
-            let mut file = File::create(path.to_owned() + "/" + &i.to_string() + "." + ext).unwrap();
-
-            let file_len = reqwest::blocking::get(image_url)
-                .unwrap().copy_to(&mut file);
+fn get_comic(comic_scraper: &dyn ComicScraper, comic_name: &str, get_first: bool) -> Result<Box<dyn Comic>, String> {
+    let comics = match comic_scraper.search_simple_comics(comic_name) {
+        Ok(ok) => ok,
+        Err(err) => {
+            println!("Error {:?}", err);
+            return Err(("Unknown error while searching for comics".to_owned()));
         }
-    }
-}
-
-fn search_comic(name: &str) -> Vec<ComicShortInfo> {
-    let mut comics = Vec::new(); 
-
-    let response = reqwest::blocking::get(
-        "https://ww5.mangakakalot.tv/search/".to_owned() + name
-        )
-        .unwrap()
-        .text()
-        .unwrap();
-
-    let document = scraper::Html::parse_document(&response);
-
-    let title_selector = scraper::Selector::parse("h3.story_name>a").unwrap();
-
-    document.select(&title_selector).for_each(|x| comics.push(ComicShortInfo { 
-        url: "https://ww5.mangakakalot.tv/".to_owned() + x.value().attr("href").unwrap(),
-        name: x.inner_html(),
-    }) );
-    
-    return comics;
-}
-
-#[derive(Parser,Default,Debug)]
-#[clap(author="jptrzy", version, about)]
-/// A simple cli comic donwloader
-struct Arguments {
-    /// [info/search/download]
-    option: String,
-    
-    /// If you don't specify a proper/full name,
-    /// the program will still try to find one.
-    #[clap(verbatim_doc_comment)]
-    comic_name: String,
-    
-    /// Automaticly choose the fist comic in the list.
-    #[clap(long, short='f', action)]
-    get_first: bool,
-
-    /// Where to start donwloading
-    #[clap(long, short='s')]
-    from_chapter: Option<usize>,
-    /// Where to end downloading
-    #[clap(long, short='e')]
-    to_chapter: Option<usize>,
-
-    /// Download format [crz/img]
-    /// cbz - comic book archive
-    /// img - image
-    #[clap(long, short='o', verbatim_doc_comment)]
-    format: Option<String>,
-}
-
-fn search_and_select_comic(comic_name: String, get_first: bool) -> Result<ComicShortInfo, String> {
-    let comics = search_comic(comic_name.as_ref());
+    };
 
     if comics.is_empty() {
         return Err(format!("No comic was found by name \"{}\"", comic_name));
     }
 
     if get_first {
-        return Ok(comics[0].clone());
+        return Ok(comics.into_iter().nth(0).unwrap());
     }
 
-    let stdin = io::stdin();
+    let stdin = std::io::stdin();
     let mut input = String::new();
 
     loop {
@@ -194,11 +36,11 @@ fn search_and_select_comic(comic_name: String, get_first: bool) -> Result<ComicS
         println!("q - Quit");
 
         for (i, comic) in comics.iter().enumerate() {
-            println!("{} - {}", i, comic.name);
+            println!("{} - {}", i, comic.get_name());
         }
 
         print!("$ ");
-        io::stdout().flush();
+        std::io::stdout().flush();
         stdin.read_line(&mut input);
 
         if input.trim() == "q" {
@@ -211,7 +53,7 @@ fn search_and_select_comic(comic_name: String, get_first: bool) -> Result<ComicS
         };
 
         if num < comics.len() {
-            return Ok(comics[num].clone()); 
+            return Ok(comics.into_iter().nth(1).unwrap()); 
         } else {
             println!("Can't recognize your input");
         } 
@@ -221,9 +63,9 @@ fn search_and_select_comic(comic_name: String, get_first: bool) -> Result<ComicS
 }
 
 fn info(args: Arguments) {
-    // println!("Start searching for \"{}\"", args.comic_name); 
-
-    let comic = match search_and_select_comic(args.comic_name, args.get_first) {
+    let comic_scraper = W5MComicScraper{};
+     
+    let comic = match get_comic(&comic_scraper, &args.comic_name, args.get_first) {
         Ok(ok) => ok,
         Err(err) => {
             println!("{}", err);
@@ -231,44 +73,54 @@ fn info(args: Arguments) {
         }
     };
 
-    let more_info = comic.get_more_info(); 
-    let chapters = comic.get_chapters().len();
-    
-    //  println!("Comic by the name \"{}\" was chosen", comic.name);
+    let data = match comic.get_data() {
+        Ok(ok) => ok,
+        Err(err) => {
+            println!("Error \"{:?}\" while serching for comic data.", err);
+            return;
+        }
+    };
 
-    println!("Name:         {}", comic.name);
-    println!("Url:          {}", comic.url);
-    println!("Status:       {}", more_info.status);
+    println!("Name:         {}", data.name);
+    println!("Url:          {}", data.url);
+    println!("Status:       {}", data.status);
     
-    if more_info.last_update.is_some() {
-        println!("Last update:  {}", more_info.last_update.unwrap());
+    if data.last_update.is_some() {
+        println!("Last update:  {}", data.last_update.unwrap());
     } else {
         println!("Last update:  unknown");
     }
 
-    println!("Chpters:      {}", chapters);
+    println!("Chapters:     {}", data.chapters);
 }
 
 fn search(args: Arguments) {
-    println!("Start searching for \"{}\"", args.comic_name); 
+    let comic_scraper = W5MComicScraper{};
 
-    let comics = search_comic(args.comic_name.as_str());
+    let comics = match comic_scraper.search_simple_comics(args.comic_name.as_str()) {
+        Ok(ok) => ok,
+        Err(err) => {
+            println!("Error {:?}", err);
+            return;
+        }
+    };
 
     if comics.is_empty() {
-        println!("No comic was found by name \"{}\"", args.comic_name); 
+        println!("No comic was found by name \"{}\"", args.comic_name);
+        return;
     } else {
         println!("By this name thouse commics were found:");
 
         comics.iter().enumerate().for_each(
-            |(i, comic)| println!("{} - {}", i, comic.name)
+            |(i, comic)| println!("{} - {}", i, comic.get_name())
             );
     }
 }
 
-fn download(args: Arguments) {
-    println!("Start searching for \"{}\"", args.comic_name); 
+fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, to_chapter: Option<usize>, file_type: &Option<String>) {
+    let comic_scraper = W5MComicScraper{};
 
-    let comic = match search_and_select_comic(args.comic_name, args.get_first) {
+    let comic = match get_comic(&comic_scraper, &comic_name, get_first) {
         Ok(ok) => ok,
         Err(err) => {
             println!("{}", err);
@@ -276,42 +128,87 @@ fn download(args: Arguments) {
         }
     };
 
-    let chapters = comic.get_chapters(); 
+    let chapters = match comic.get_chapters() {
+        Ok(ok) => ok,
+        Err(err) => {
+            println!("Unknown error while searching for chapters");
+            return;
+        }
+    };
 
     let length = chapters.len();
-    let from_chapter = args.from_chapter.unwrap_or(1);
-    let to_chapter = args.to_chapter.unwrap_or(length);
+    let _from_chapter = from_chapter.unwrap_or(1);
+    let _to_chapter = to_chapter.unwrap_or(length);
 
-    if 1 > from_chapter {
+    if 1 > _from_chapter {
         println!("Can't start downloading chapter bellow 1"); 
         return;
     }
     
-    if from_chapter > to_chapter || to_chapter > length {
+    if _from_chapter > _to_chapter || _to_chapter > length {
         println!("Their isn't that much chapters to download or from_chapter is grater then to_chapter"); 
         return;
     }
 
-    println!("Start downloading chapters {} to {}", from_chapter, to_chapter);
+    println!("Start downloading chapters {} to {}", _from_chapter, _to_chapter);
 
-    for n in from_chapter..to_chapter+1 {
+    for n in _from_chapter.._to_chapter+1 {
 
         let chapter = &chapters[length - n];
 
-        println!("Downloading {} chapter that has name \"{}\"", n, chapter.name);
+        println!("Downloading {} chapter that has name \"{}\"", n, chapter.get_name());
 
         chapter.download_to_folder(
-            (comic.name.clone() + "/" + chapter.name.as_str()).as_str());
+            (comic.get_name() + "/" + chapter.get_name().as_str()).as_str());
     }
 }
- 
+
+#[derive(clap::Parser, Debug)]
+#[clap(author="jptrzy", version, about)]
+/// A simple cli comic donwloader
+struct Arguments {
+    // Test
+    #[clap(subcommand)]
+    action: Action,
+    
+    /// If you don't specify a proper/full name,
+    /// the program will still try to find one.
+    #[clap(verbatim_doc_comment)]
+    comic_name: String,
+    
+    /// Automaticly choose the fist comic in the list.
+    #[clap(long, short='f', action)]
+    get_first: bool,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Action {
+   Info,
+   Search,
+   Download {
+       /// Where to start donwloading
+       #[clap(long, short='s')]
+       from_chapter: Option<usize>,
+       /// Where to end downloading
+       #[clap(long, short='e')]
+       to_chapter: Option<usize>,
+
+       /// Download format [crz/img]
+       /// cbz - comic book archive
+       /// img - image
+       #[clap(long, short='o', verbatim_doc_comment)]
+       format: Option<String>,
+   },
+}
+
 fn main() {
     let args: Arguments = Arguments::parse();
-
-    match args.option.as_str() {
-        "info" => info(args),
-        "search" => search(args),
-        "download" => download(args),
-        _ => println!("Option \"{}\" don't exists", args.option)
+ 
+    match args.action {
+        Action::Info => info(args),
+        Action::Search => search(args),
+        Action::Download { from_chapter, to_chapter, ref format } 
+            => download(&args.comic_name, args.get_first, from_chapter, to_chapter, format),
+        _ => println!("Option \"{:?}\" don't exists", args.action)
     }
 }
