@@ -4,6 +4,7 @@ Download, search and get information about your comic/manga/webtoon from your te
 *I don't usually work with rust so if anybody see any error or a new way to make it faster, than fill free to contribute.*
 
 # Roadmap
+- download progress bar
 - cbz support
 - upgrade input system / interface
 - adding another scraper for different website
@@ -15,3 +16,4 @@ Download, search and get information about your comic/manga/webtoon from your te
 - [mangodl](https://github.com/Gyro7/mangodl/blob/main/README.md)
 - [hakuneko](https://hakuneko.download) - can display and download (also anime)
 - [opencomic](https://github.com/ollm/OpenComic) - comic viewer
+- [zathura-ca]() - simple comic viewer

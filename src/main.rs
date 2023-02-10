@@ -1,3 +1,5 @@
+use std::fs::read_dir;
+use std::io::Read;
 use std::{fs::File, path::Path, ffi::OsStr, fs, io::Write};
 use clap::Parser;
 use chrono::{DateTime, Utc, FixedOffset, NaiveDateTime};
@@ -9,6 +11,20 @@ pub mod comic_scraper;
 
 use crate::comic_scraper::*;
 use crate::comic_scraper::ww5_mangakakalot_tv::*;
+
+fn get_tmp_path() -> String {
+    return "/tmp/awocadodl".into();
+}
+
+fn get_comic_path() -> String {
+    let mut path: String = env::var("AWOKADO_DL_PATH").unwrap_or("".into());
+
+    if path.is_empty() {
+        path = env::var("HOME").unwrap() + "/Comics";
+    }
+
+    return path;
+}
 
 fn get_comic(comic_scraper: &dyn ComicScraper, comic_name: &str, get_first: bool) -> Result<Box<dyn Comic>, String> {
     let comics = match comic_scraper.search_simple_comics(comic_name) {
@@ -117,7 +133,9 @@ fn search(args: Arguments) {
     }
 }
 
-fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, to_chapter: Option<usize>, file_type: &Option<String>) {
+// TODO Find simpler way to pass args from subcommand.
+// TODO add progress bar
+fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, to_chapter: Option<usize>, file_type: Option<String>) {
     let comic_scraper = W5MComicScraper{};
 
     let comic = match get_comic(&comic_scraper, &comic_name, get_first) {
@@ -152,19 +170,61 @@ fn download(comic_name: &String, get_first: bool, from_chapter: Option<usize>, t
 
     println!("Start downloading chapters {} to {}", _from_chapter, _to_chapter);
 
-    let mut path: String = env::var("AWOKADO_DL_PATH")
-        .unwrap_or(env::var("HOME")
-            .unwrap_or(".".to_owned()) + "/Comics");
+    let comic_path: String = get_comic_path();
+    let tmp_path: String = get_tmp_path();
+    let path: &String;
 
+    let is_cbz: bool = file_type.clone().unwrap_or("".into()) == "cbz";
+
+    path = if is_cbz {
+        &tmp_path
+    } else { 
+        &comic_path
+    };
+  
     for n in _from_chapter.._to_chapter+1 {
-
         let chapter = &chapters[length - n];
+        let partial_path: String = "/".to_owned() + comic.get_name().as_str() + "/" + chapter.get_name().as_str();
 
-        println!("Downloading {} chapter that has name \"{}\"", n, chapter.get_name());
 
-        chapter.download_to_folder(
-            (path.clone() + "/" + comic.get_name().as_str() + "/" + chapter.get_name().as_str()).as_str());
+        println!("({}/{}) Downloading {} chapter - \"{}\"",
+            n - _from_chapter + 1, _to_chapter - _from_chapter + 1,    
+            n,  chapter.get_name());
+
+        chapter.download_to_folder((path.clone() + partial_path.as_str()).as_str());
+        
+        if is_cbz {
+            println!("({}/{}) Converting {} chapter - \"{}\"",
+                n - _from_chapter + 1, _to_chapter - _from_chapter + 1,    
+                n,  chapter.get_name());
+
+            let mut buffer = Vec::new();
+
+            let cbz_file = std::fs::File::create(comic_path.clone() + partial_path.as_str() + ".cbz").unwrap();
+            let mut zip = zip::ZipWriter::new(cbz_file);
+
+            for entry_res in read_dir((path.clone() + partial_path.as_str()).as_str()).unwrap() {
+                let entry = entry_res.unwrap();
+
+                if entry.file_type().unwrap().is_dir() {
+                    continue;
+                }
+
+                let file_name_buf = entry.file_name();
+                let file_name = file_name_buf.to_str().unwrap();
+
+                zip.start_file_from_path(Path::new(file_name), zip::write::FileOptions::default()).unwrap();
+                let mut f = File::open(entry.path().as_path()).unwrap();
+
+                f.read_to_end(&mut buffer).unwrap();
+                zip.write_all(&buffer).unwrap();
+                buffer.clear();
+            }
+
+            zip.finish().unwrap();
+        }
     }
+
 }
 
 #[derive(clap::Parser, Debug)]
@@ -211,7 +271,7 @@ fn main() {
     match args.action {
         Action::Info => info(args),
         Action::Search => search(args),
-        Action::Download { from_chapter, to_chapter, ref format } 
+        Action::Download { from_chapter, to_chapter, format } 
             => download(&args.comic_name, args.get_first, from_chapter, to_chapter, format),
         _ => println!("Option \"{:?}\" don't exists", args.action)
     }

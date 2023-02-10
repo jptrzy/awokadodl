@@ -15,3 +15,5 @@ strum_macros = "0.24"
 
 clap = { version = "3.1.6", features = ["derive"] }
 
+zip = "0.6.4"
+
